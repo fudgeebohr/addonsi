@@ -12,7 +12,7 @@
 // re-read from the live player page on every run; the others are only
 // changed by editing this file if the site ever rotates them.
 
-var AW_VERSION = "1.4.2";
+var AW_VERSION = "1.4.3";
 var AW_BASE = "https://aniwaves.org";
 var AW_PLAY = "https://play.aniwaves.org";
 var AW_UA = "Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Mobile/15E148 Safari/604.1";
@@ -312,6 +312,7 @@ function awAbs(href) {
 var AW_INDEX = null;
 var AW_DIAG = "";
 var AW_TRACE = [];
+var AW_LINE = 0;
 
 // Parse the index; if it is incomplete, keep every complete entry.
 function awParseIndex(txt) {
@@ -524,6 +525,13 @@ async function awFetchDebug() {
 function awDiagRow(rows) {
     var lines = [];
     for (var i = 0; i < rows.length; i++) lines.push(rows[i].title);
+    if (AW_LINE > 0 && lines[AW_LINE - 1] !== undefined) {   // e.g. "aw-stream <slug> 4" shows only line 4
+        return JSON.stringify([{
+            title: "[" + AW_LINE + "/" + lines.length + "] " + lines[AW_LINE - 1],
+            image: "",
+            href: AW_BASE + "/?aw-diag=" + encodeURIComponent(lines.join("\n"))
+        }]);
+    }
     return JSON.stringify([{
         title: "Aniwaves diagnostic - tap to read all " + lines.length + " lines. " + (lines[0] || ""),
         image: "",
@@ -536,10 +544,20 @@ async function searchResults(keyword) {
     try {
         var raw = String(keyword || "");
         try { raw = decodeURIComponent(raw.replace(/\+/g, " ")); } catch (e) { }
-        if (/^\s*aw-debug\s*$/i.test(raw)) return await awDebug();
-        if (/^\s*aw-fetch\s*$/i.test(raw)) return await awFetchDebug();
-        var dm = raw.match(/^\s*aw-(page|stream)(?:\s+(\S+))?\s*$/i);
-        if (dm) return dm[1].toLowerCase() === "page" ? await awPageDebug(dm[2]) : await awStreamDebug(dm[2]);
+        var dm = raw.match(/^\s*aw-(debug|fetch|page|stream)((?:\s+\S+)*)\s*$/i);
+        if (dm) {
+            var args = dm[2].trim() ? dm[2].trim().split(/\s+/) : [], slug = "", z;
+            AW_LINE = 0;
+            for (z = 0; z < args.length; z++) {
+                if (/^\d{1,2}$/.test(args[z])) AW_LINE = parseInt(args[z], 10);
+                else if (!slug) slug = args[z];
+            }
+            var kind = dm[1].toLowerCase();
+            if (kind === "debug") return await awDebug();
+            if (kind === "fetch") return await awFetchDebug();
+            if (kind === "page") return await awPageDebug(slug);
+            return await awStreamDebug(slug);
+        }
         var q = awNorm(raw), words = q ? q.split(" ") : [];
         var list = await awIndex();
         var scored = [];
