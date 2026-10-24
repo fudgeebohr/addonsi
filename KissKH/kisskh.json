@@ -1,0 +1,18 @@
+{
+   "sourceName": "KissKH",
+   "iconUrl": "https://kisskh.co/favicon.ico",
+   "author": {
+       "name": "fudgeebohr",
+       "icon": "https://kisskh.co/favicon.ico"
+   },
+   "version": "1.0.0",
+   "language": "English (SUB)",
+   "streamType": "HLS",
+   "quality": "720p",
+   "baseUrl": "https://kisskh.co/",
+   "searchBaseUrl": "https://kisskh.co/api/DramaList/Search?q=%s&type=0",
+   "scriptUrl": "https://raw.githubusercontent.com/fudgeebohr/addonsi/main/KissKH/kisskh.js",
+   "asyncJS": true,
+   "softsub": true,
+   "type": "shows"
+}
