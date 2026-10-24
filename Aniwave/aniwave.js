@@ -12,7 +12,7 @@
 // re-read from the live player page on every run; the others are only
 // changed by editing this file if the site ever rotates them.
 
-var AW_VERSION = "1.0.3";
+var AW_VERSION = "1.1.0";
 var AW_BASE = "https://aniwaves.org";
 var AW_PLAY = "https://play.aniwaves.org";
 var AW_UA = "Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Mobile/15E148 Safari/604.1";
@@ -352,6 +352,12 @@ async function awDebug() {
     function add(t) { rows.push({ title: String(t), image: "", href: AW_BASE + "/" }); }
     add("Aniwaves module v" + AW_VERSION + " is running");
     try {
+        var fh = await awGet(AW_BASE + "/filter/?keyword=black+clover", { "Referer": AW_BASE + "/" });
+        var fr = awParseFilter(fh);
+        add("filter page: " + String(fh).length + " chars, " + fr.length + " results: " + fr.map(function (x) { return x.title; }).join(" | "));
+        if (!fr.length) add("filter starts: " + String(fh).slice(0, 80).replace(/\s+/g, " "));
+    } catch (e) { add("filter page failed: " + ((e && e.message) || e)); }
+    try {
         var res = await fetchv2(AW_BASE + "/filter-index.json", { "User-Agent": AW_UA, "Referer": AW_BASE + "/", "Accept": "application/json" }, "GET", null);
         var txt = await res.text();
         add("fetch ok in " + (Date.now() - t0) + "ms, " + String(txt).length + " chars");
@@ -367,12 +373,61 @@ async function awDebug() {
     return JSON.stringify(rows);
 }
 
+// ---- server-side search: https://aniwaves.org/filter/?keyword=... ----------
+function awSlugTitle(slug) {
+    var t = String(slug).replace(/-\d+$/, "").replace(/-/g, " ");
+    return t.replace(/\b[a-z]/g, function (c) { return c.toUpperCase(); });
+}
+
+// The page also has a "Top rated" sidebar full of /watch/ links, so only the
+// first N cards are kept, N being the page's own "<N> Items" counter.
+function awParseFilter(html) {
+    var cm = String(html).match(/(\d+)\s*Items?\b/i);
+    var limit = cm ? parseInt(cm[1], 10) : 40;
+    if (limit > 60) limit = 60;
+    var re = /<a\b[^>]*href="(?:https?:\/\/(?:www\.)?aniwaves\.org)?\/watch\/([A-Za-z0-9][^\/"?#]*)\/?"[^>]*>/gi;
+    var order = [], found = {}, m;
+    while ((m = re.exec(html))) {
+        var slug = m[1];
+        var end = html.indexOf("</a>", m.index);
+        var seg = html.slice(m.index, end > 0 && end - m.index < 1500 ? end : m.index + 300);
+        var t = (seg.match(/class="[^"]*d-title[^"]*"[^>]*>([^<]+)</) || [])[1] ||
+            (m[0].match(/title="([^"]+)"/) || [])[1] ||
+            (seg.match(/alt="([^"]{2,})"/) || [])[1] || "";
+        if (!found[slug]) {
+            if (order.length >= limit) continue;
+            found[slug] = { title: "" };
+            order.push(slug);
+        }
+        if (!found[slug].title && t) found[slug].title = awStrip(t);
+    }
+    var out = [];
+    for (var i = 0; i < order.length; i++) {
+        out.push({
+            title: found[order[i]].title || awSlugTitle(order[i]),
+            image: "https://img.aniwaves.org/thumb/w_128/h_176/" + order[i] + ".webp",
+            href: AW_BASE + "/watch/" + order[i] + "/"
+        });
+    }
+    return out;
+}
+
+async function awFilterSearch(raw) {
+    var url = AW_BASE + "/filter/?keyword=" + encodeURIComponent(raw).replace(/%20/g, "+");
+    var html = await awGet(url, { "Referer": AW_BASE + "/", "Accept": "text/html,*/*" });
+    return awParseFilter(html);
+}
+
 // --------------------------------------------------------------- search ---
 async function searchResults(keyword) {
     try {
         var raw = String(keyword || "");
         try { raw = decodeURIComponent(raw.replace(/\+/g, " ")); } catch (e) { }
         if (/^\s*aw-debug\s*$/i.test(raw)) return await awDebug();
+        try {
+            var viaPage = await awFilterSearch(raw.trim());
+            if (viaPage.length) return JSON.stringify(viaPage);
+        } catch (e) { }
         var q = awNorm(raw), words = q ? q.split(" ") : [];
         var list = await awIndex();
         var scored = [];

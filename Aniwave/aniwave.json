@@ -10,7 +10,7 @@
   "streamType": "HLS",
   "quality": "1080p",
   "baseUrl": "https://aniwaves.org/",
-  "searchBaseUrl": "https://aniwaves.org/filter-index.json?q=%s",
+  "searchBaseUrl": "https://aniwaves.org/filter/?keyword=%s",
   "scriptUrl": "https://raw.githubusercontent.com/fudgeebohr/addonsi/main/Aniwave/aniwave.js",
   "asyncJS": true,
   "streamAsyncJS": false,
