@@ -12,7 +12,7 @@
 // re-read from the live player page on every run; the others are only
 // changed by editing this file if the site ever rotates them.
 
-var AW_VERSION = "1.0.2";
+var AW_VERSION = "1.0.3";
 var AW_BASE = "https://aniwaves.org";
 var AW_PLAY = "https://play.aniwaves.org";
 var AW_UA = "Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Mobile/15E148 Safari/604.1";
@@ -311,19 +311,34 @@ function awAbs(href) {
 
 var AW_INDEX = null;
 
+// Parse the index; if the download was cut off, keep every complete entry.
+function awParseIndex(txt) {
+    txt = String(txt).replace(/^\uFEFF/, "").trim();
+    try { return JSON.parse(txt); } catch (e) { }
+    var out = [], re = /\{"n":"(?:[^"\\]|\\.)*"[^{}]*?(?:\[[^\]]*\][^{}]*?)*\}/g, m;
+    var items = txt.match(/\{"n":[\s\S]*?"rd":"[^"]*"\}/g) || [];
+    for (var i = 0; i < items.length; i++) { try { out.push(JSON.parse(items[i])); } catch (e) { } }
+    return out;
+}
+
 async function awIndex() {
     if (AW_INDEX) return AW_INDEX;
-    var tries = [{ "Referer": AW_BASE + "/", "Accept": "application/json" }, {}], last = "", i;
-    for (i = 0; i < tries.length; i++) {
+    var variants = [
+        { url: AW_BASE + "/filter-index.json", h: { "Referer": AW_BASE + "/", "Accept": "application/json" } },
+        { url: AW_BASE + "/filter-index.json", h: {} },
+        { url: AW_BASE + "/filter-index.json?_=" + Date.now(), h: { "Referer": AW_BASE + "/", "Accept": "*/*" } }
+    ], note = "", best = [], i;
+    for (i = 0; i < variants.length; i++) {
         try {
-            var txt = String(await awGet(AW_BASE + "/filter-index.json", tries[i]));
-            txt = txt.replace(/^\uFEFF/, "").trim();
-            var parsed = JSON.parse(txt);
-            if (parsed && parsed.length) { AW_INDEX = parsed; return AW_INDEX; }
-            last = "index empty";
-        } catch (e) { last = (e && e.message) || String(e); }
+            var txt = String(await awGet(variants[i].url, variants[i].h));
+            var parsed = awParseIndex(txt);
+            if (parsed && parsed.length > best.length) best = parsed;
+            if (parsed && parsed.length && /\]\s*$/.test(txt)) { AW_INDEX = parsed; return AW_INDEX; }
+            note = "got " + txt.length + " chars, " + (parsed ? parsed.length : 0) + " titles, starts: " + txt.slice(0, 40).replace(/\s+/g, " ");
+        } catch (e) { note = (e && e.message) || String(e); }
     }
-    throw new Error(last);
+    if (best.length) { AW_INDEX = best; return AW_INDEX; }   // partial list beats nothing
+    throw new Error(note);
 }
 
 function awNorm(str) {
