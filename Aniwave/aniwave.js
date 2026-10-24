@@ -12,7 +12,7 @@
 // re-read from the live player page on every run; the others are only
 // changed by editing this file if the site ever rotates them.
 
-var AW_VERSION = "1.4.1";
+var AW_VERSION = "1.4.2";
 var AW_BASE = "https://aniwaves.org";
 var AW_PLAY = "https://play.aniwaves.org";
 var AW_UA = "Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Mobile/15E148 Safari/604.1";
@@ -388,7 +388,7 @@ async function awDebug() {
         for (var i = 0; i < list.length; i++) if (awNorm(list[i].n).indexOf("black clover") >= 0) hit++;
         add("'black clover' matches: " + hit + "; first title: " + (list[0] && list[0].n));
     } catch (e) { add("title list failed: " + ((e && e.message) || e)); }
-    return JSON.stringify(rows);
+    return awDiagRow(rows);
 }
 
 // Download a whole (possibly >96 KB) page by stitching Range pieces together.
@@ -434,7 +434,7 @@ async function awPageDebug(slug) {
         var j = html.indexOf('data-num="2"');
         add("data-num 2: " + (j >= 0 ? html.slice(Math.max(0, j - 80), j + 80).replace(/\s+/g, " ") : "none"));
     } catch (e) { add("page failed: " + ((e && e.message) || e)); }
-    return JSON.stringify(rows);
+    return awDiagRow(rows);
 }
 
 async function awStreamDebug(slug) {
@@ -457,7 +457,7 @@ async function awStreamDebug(slug) {
             } catch (e) { add("subtitle file (" + variants[v][0] + ") failed: " + ((e && e.message) || e)); }
         }
     }
-    return JSON.stringify(rows);
+    return awDiagRow(rows);
 }
 
 // ---- tolerant HTML helpers (the live pages are minified: href=/watch/x/ data-num=1) ----
@@ -516,7 +516,19 @@ async function awFetchDebug() {
             add(targets[t][0] + ": " + txt.length + " chars; " + info.join(", ") + "; members: " + keys.join(","));
         } catch (e) { add(targets[t][0] + " failed: " + ((e && e.message) || e)); }
     }
-    return JSON.stringify(rows);
+    return awDiagRow(rows);
+}
+
+// The app shows only one row per diagnostic, so everything goes into a single
+// row; tapping it opens the details page, which prints the full text.
+function awDiagRow(rows) {
+    var lines = [];
+    for (var i = 0; i < rows.length; i++) lines.push(rows[i].title);
+    return JSON.stringify([{
+        title: "Aniwaves diagnostic - tap to read all " + lines.length + " lines. " + (lines[0] || ""),
+        image: "",
+        href: AW_BASE + "/?aw-diag=" + encodeURIComponent(lines.join("\n"))
+    }]);
 }
 
 // --------------------------------------------------------------- search ---
@@ -573,6 +585,12 @@ async function searchResults(keyword) {
 
 // ------------------------------------------------------------- details ---
 async function extractDetails(url) {
+    var dg = String(url).match(/[?&]aw-diag=([^&#]*)/);
+    if (dg) {
+        var text = "";
+        try { text = decodeURIComponent(dg[1]); } catch (e0) { text = dg[1]; }
+        return JSON.stringify([{ description: text, aliases: "Aniwaves v" + AW_VERSION, airdate: "diagnostic" }]);
+    }
     try {
         var html = await awGetAll(awAbs(url), { "Referer": AW_BASE + "/" });
         var desc = "", aliases = "", airdate = "", i, e;
