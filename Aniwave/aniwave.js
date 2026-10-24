@@ -12,7 +12,7 @@
 // re-read from the live player page on every run; the others are only
 // changed by editing this file if the site ever rotates them.
 
-var AW_VERSION = "1.4.0";
+var AW_VERSION = "1.4.1";
 var AW_BASE = "https://aniwaves.org";
 var AW_PLAY = "https://play.aniwaves.org";
 var AW_UA = "Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Mobile/15E148 Safari/604.1";
@@ -445,6 +445,18 @@ async function awStreamDebug(slug) {
     for (var i = 0; i < AW_TRACE.length; i++) add(AW_TRACE[i]);
     add("stream: " + (r.stream ? r.stream.length + " chars, " + r.stream.slice(0, 90) + "…" : "none"));
     add("subtitles: " + (r.subtitles || "none"));
+    if (r.subtitles) {
+        var variants = [["no referer", {}], ["megaplay referer", { "Referer": "https://megaplay.buzz/", "Origin": "https://megaplay.buzz" }]];
+        for (var v = 0; v < variants.length; v++) {
+            try {
+                var h = { "User-Agent": AW_UA }, k;
+                for (k in variants[v][1]) h[k] = variants[v][1][k];
+                var res = await fetchv2(r.subtitles, h, "GET", null);
+                var txt = String(await res.text());
+                add("subtitle file (" + variants[v][0] + "): " + txt.length + " chars, starts: " + txt.slice(0, 40).replace(/\s+/g, " "));
+            } catch (e) { add("subtitle file (" + variants[v][0] + ") failed: " + ((e && e.message) || e)); }
+        }
+    }
     return JSON.stringify(rows);
 }
 
