@@ -12,7 +12,7 @@
 // re-read from the live player page on every run; the others are only
 // changed by editing this file if the site ever rotates them.
 
-var AW_VERSION = "1.2.2";
+var AW_VERSION = "1.3.0";
 var AW_BASE = "https://aniwaves.org";
 var AW_PLAY = "https://play.aniwaves.org";
 var AW_UA = "Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Mobile/15E148 Safari/604.1";
@@ -311,6 +311,7 @@ function awAbs(href) {
 
 var AW_INDEX = null;
 var AW_DIAG = "";
+var AW_TRACE = [];
 
 // Parse the index; if it is incomplete, keep every complete entry.
 function awParseIndex(txt) {
@@ -416,12 +417,45 @@ async function awGetAll(url, headers) {
     return parts.join("");
 }
 
+
+// aw-page [slug]   -> what the raw episode page contains
+// aw-stream [slug] -> runs the stream chain for episode 1 and shows each step
+async function awPageDebug(slug) {
+    var rows = [];
+    function add(t) { rows.push({ title: String(t), image: "", href: AW_BASE + "/" }); }
+    var url = AW_BASE + "/watch/" + (slug || "black-clover-520") + "/";
+    try {
+        var html = await awGetAll(url, { "Referer": AW_BASE + "/" });
+        var c = function (re) { return (html.match(re) || []).length; };
+        add("page " + html.length + " chars, ends with </html>: " + /<\/html>\s*$/i.test(html));
+        add("data-num: " + c(/data-num=/g) + ", /watch/ links: " + c(/\/watch\//g) + ", 'Episode 2': " + c(/Episode 2\b/g));
+        var i = html.indexOf("data-num=");
+        add("first data-num: " + (i >= 0 ? html.slice(Math.max(0, i - 120), i + 120).replace(/\s+/g, " ") : "none"));
+        var j = html.indexOf('data-num="2"');
+        add("data-num 2: " + (j >= 0 ? html.slice(Math.max(0, j - 80), j + 80).replace(/\s+/g, " ") : "none"));
+    } catch (e) { add("page failed: " + ((e && e.message) || e)); }
+    return JSON.stringify(rows);
+}
+
+async function awStreamDebug(slug) {
+    var rows = [];
+    function add(t) { rows.push({ title: String(t), image: "", href: AW_BASE + "/" }); }
+    AW_TRACE = [];
+    var r = JSON.parse(await extractStreamUrl(AW_BASE + "/watch/" + (slug || "black-clover-520") + "/?ep=1"));
+    for (var i = 0; i < AW_TRACE.length; i++) add(AW_TRACE[i]);
+    add("stream: " + (r.stream ? r.stream.length + " chars, " + r.stream.slice(0, 90) + "…" : "none"));
+    add("subtitles: " + (r.subtitles || "none"));
+    return JSON.stringify(rows);
+}
+
 // --------------------------------------------------------------- search ---
 async function searchResults(keyword) {
     try {
         var raw = String(keyword || "");
         try { raw = decodeURIComponent(raw.replace(/\+/g, " ")); } catch (e) { }
         if (/^\s*aw-debug\s*$/i.test(raw)) return await awDebug();
+        var dm = raw.match(/^\s*aw-(page|stream)(?:\s+(\S+))?\s*$/i);
+        if (dm) return dm[1].toLowerCase() === "page" ? await awPageDebug(dm[2]) : await awStreamDebug(dm[2]);
         var q = awNorm(raw), words = q ? q.split(" ") : [];
         var list = await awIndex();
         var scored = [];
@@ -584,16 +618,24 @@ async function extractStreamUrl(url) {
             html = await awGetAll(page, { "Referer": AW_BASE + "/" });
             km = html.match(kre1) || html.match(kre2);
         }
-        if (!km) return JSON.stringify({ stream: "", subtitles: "" });
+        if (!km) { AW_TRACE.push("no player token in page (" + html.length + " chars)"); return JSON.stringify({ stream: "", subtitles: "" }); }
         var pageKey = await awPageKey();
         for (var i = 0; i < AW_SERVERS.length; i++) {
             try {
                 var r = await awTryServer(km[1], ep, AW_SERVERS[i], AW_TYPE, pageKey);
-                return JSON.stringify(r);
-            } catch (e) { }
+                AW_TRACE.push("server " + AW_SERVERS[i] + " ok");
+                // The CDN wants the player site as referrer. The documented keys are
+                // stream/subtitles; the extra keys are for apps that accept headers.
+                var hdr = { "Referer": "https://megaplay.buzz/", "Origin": "https://megaplay.buzz", "User-Agent": AW_UA };
+                return JSON.stringify({
+                    stream: r.stream, subtitles: r.subtitles, subtitle: r.subtitles, headers: hdr,
+                    streams: [{ title: "Aniwaves", streamUrl: r.stream, headers: hdr }]
+                });
+            } catch (e) { AW_TRACE.push("server " + AW_SERVERS[i] + ": " + ((e && e.message) || e)); }
         }
         return JSON.stringify({ stream: "", subtitles: "" });
     } catch (e) {
+        AW_TRACE.push("stream error: " + ((e && e.message) || e));
         return JSON.stringify({ stream: "", subtitles: "" });
     }
 }
