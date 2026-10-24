@@ -312,30 +312,49 @@ var AW_INDEX = null;
 
 async function awIndex() {
     if (AW_INDEX) return AW_INDEX;
-    var txt = await awGet(AW_BASE + "/filter-index.json", { "Referer": AW_BASE + "/" });
-    AW_INDEX = JSON.parse(txt);
-    return AW_INDEX;
+    var tries = [{ "Referer": AW_BASE + "/", "Accept": "application/json" }, {}], last = "", i;
+    for (i = 0; i < tries.length; i++) {
+        try {
+            var txt = String(await awGet(AW_BASE + "/filter-index.json", tries[i]));
+            txt = txt.replace(/^\uFEFF/, "").trim();
+            var parsed = JSON.parse(txt);
+            if (parsed && parsed.length) { AW_INDEX = parsed; return AW_INDEX; }
+            last = "index empty";
+        } catch (e) { last = (e && e.message) || String(e); }
+    }
+    throw new Error(last);
+}
+
+function awNorm(str) {
+    return String(str || "").toLowerCase().replace(/[^a-z0-9\u00c0-\uffff]+/g, " ").trim();
 }
 
 // --------------------------------------------------------------- search ---
 async function searchResults(keyword) {
     try {
-        var q = String(keyword || "").toLowerCase().trim();
+        var raw = String(keyword || "");
+        try { raw = decodeURIComponent(raw.replace(/\+/g, " ")); } catch (e) { }
+        var q = awNorm(raw), words = q ? q.split(" ") : [];
         var list = await awIndex();
         var scored = [];
         for (var i = 0; i < list.length; i++) {
             var it = list[i];
             var names = [it.n, it.j].concat(it.an || []);
-            var best = -1;
+            var best = 0;
             for (var k = 0; k < names.length; k++) {
-                var nm = String(names[k] || "").toLowerCase();
+                var nm = awNorm(names[k]);
                 if (!nm) continue;
-                var pos = nm.indexOf(q);
-                if (pos < 0) continue;
-                var s = pos === 0 ? 2 : 1;
-                if (best < s) best = s;
+                var s = 0;
+                if (!q) s = 1;
+                else if (nm.indexOf(q) === 0) s = 4;
+                else if (nm.indexOf(q) > 0) s = 3;
+                else {
+                    var all = true;
+                    for (var w = 0; w < words.length; w++) if (nm.indexOf(words[w]) < 0) { all = false; break; }
+                    if (all) s = 2;
+                }
+                if (s > best) best = s;
             }
-            if (q === "") best = 1;
             if (best > 0) scored.push({ s: best, it: it });
         }
         scored.sort(function (a, b) { return b.s - a.s; });
@@ -350,7 +369,8 @@ async function searchResults(keyword) {
         }
         return JSON.stringify(out);
     } catch (e) {
-        return JSON.stringify([{ title: "Error", image: "", href: "" }]);
+        // Show the real reason in the results list instead of failing silently.
+        return JSON.stringify([{ title: "Aniwaves error: " + ((e && e.message) || e), image: "", href: AW_BASE + "/" }]);
     }
 }
 
