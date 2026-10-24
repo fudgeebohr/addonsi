@@ -12,7 +12,7 @@
 // re-read from the live player page on every run; the others are only
 // changed by editing this file if the site ever rotates them.
 
-var AW_VERSION = "1.1.0";
+var AW_VERSION = "1.1.1";
 var AW_BASE = "https://aniwaves.org";
 var AW_PLAY = "https://play.aniwaves.org";
 var AW_UA = "Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Mobile/15E148 Safari/604.1";
@@ -310,6 +310,7 @@ function awAbs(href) {
 }
 
 var AW_INDEX = null;
+var AW_DIAG = "";
 
 // Parse the index; if the download was cut off, keep every complete entry.
 function awParseIndex(txt) {
@@ -415,7 +416,11 @@ function awParseFilter(html) {
 async function awFilterSearch(raw) {
     var url = AW_BASE + "/filter/?keyword=" + encodeURIComponent(raw).replace(/%20/g, "+");
     var html = await awGet(url, { "Referer": AW_BASE + "/", "Accept": "text/html,*/*" });
-    return awParseFilter(html);
+    var res = awParseFilter(html);
+    AW_DIAG = "filter page " + String(html).length + " chars, " + res.length + " parsed, " +
+        (/\/watch\//.test(html) ? "has /watch/ links" : "NO /watch/ links") + ", starts: " +
+        String(html).slice(0, 60).replace(/\s+/g, " ");
+    return res;
 }
 
 // --------------------------------------------------------------- search ---
@@ -427,7 +432,7 @@ async function searchResults(keyword) {
         try {
             var viaPage = await awFilterSearch(raw.trim());
             if (viaPage.length) return JSON.stringify(viaPage);
-        } catch (e) { }
+        } catch (e) { AW_DIAG = "filter page failed: " + ((e && e.message) || e); }
         var q = awNorm(raw), words = q ? q.split(" ") : [];
         var list = await awIndex();
         var scored = [];
@@ -453,6 +458,9 @@ async function searchResults(keyword) {
         }
         scored.sort(function (a, b) { return b.s - a.s; });
         var out = [];
+        if (!scored.length) {
+            return JSON.stringify([{ title: "No match (v" + AW_VERSION + "; " + AW_DIAG + "; fallback index " + list.length + " titles)", image: "", href: AW_BASE + "/" }]);
+        }
         for (var n = 0; n < scored.length && n < 40; n++) {
             var x = scored[n].it;
             out.push({
