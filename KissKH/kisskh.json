@@ -3,7 +3,7 @@
    "iconUrl": "https://kisskh.co/favicon.ico",
    "author": {
        "name": "fudgeebohr",
-       "icon": "assets/sad_banana_cat.jpg"
+       "icon": "https://raw.githubusercontent.com/fudgeebohr/addonsi/main/assets/sad_banana_cat.jpg"
    },
    "version": "1.0.0",
    "language": "English (SUB)",
