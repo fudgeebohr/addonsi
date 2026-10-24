@@ -12,7 +12,7 @@
 // re-read from the live player page on every run; the others are only
 // changed by editing this file if the site ever rotates them.
 
-var AW_VERSION = "1.3.0";
+var AW_VERSION = "1.4.0";
 var AW_BASE = "https://aniwaves.org";
 var AW_PLAY = "https://play.aniwaves.org";
 var AW_UA = "Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Mobile/15E148 Safari/604.1";
@@ -448,12 +448,72 @@ async function awStreamDebug(slug) {
     return JSON.stringify(rows);
 }
 
+// ---- tolerant HTML helpers (the live pages are minified: href=/watch/x/ data-num=1) ----
+function awTagEnd(html, i) {
+    var q = "", c;
+    for (; i < html.length; i++) {
+        c = html.charAt(i);
+        if (q) { if (c === q) q = ""; }
+        else if (c === '"' || c === "'") q = c;
+        else if (c === ">") return i;
+    }
+    return -1;
+}
+
+function awAttr(tag, name) {
+    var m = tag.match(new RegExp("[\\s\"']" + name + "=(?:\"([^\"]*)\"|'([^']*)'|([^\\s>]+))", "i"));
+    return m ? (m[1] !== undefined ? m[1] : (m[2] !== undefined ? m[2] : m[3])) : null;
+}
+
+function awTags(html, name) {
+    var re = new RegExp("<" + name + "[\\s]", "gi"), out = [], m, e;
+    while ((m = re.exec(html))) {
+        e = awTagEnd(html, m.index);
+        if (e < 0) break;
+        out.push({ tag: html.slice(m.index, e + 1), start: m.index, end: e });
+    }
+    return out;
+}
+
+
+// aw-fetch -> what the app's fetch function gives back (headers, Range support)
+async function awFetchDebug() {
+    var rows = [];
+    function add(t) { rows.push({ title: String(t), image: "", href: AW_BASE + "/" }); }
+    var targets = [
+        ["page", AW_BASE + "/watch/black-clover-520/", { "Referer": AW_BASE + "/", "Range": "bytes=-70000" }],
+        ["json", AW_BASE + "/filter-index.json", { "Referer": AW_BASE + "/", "Range": "bytes=0-79999" }]
+    ];
+    for (var t = 0; t < targets.length; t++) {
+        try {
+            var h = { "User-Agent": AW_UA }, k;
+            for (k in targets[t][2]) h[k] = targets[t][2][k];
+            var res = await fetchv2(targets[t][1], h, "GET", null);
+            var keys = [];
+            for (k in res) keys.push(k);
+            var txt = String(await res.text());
+            var info = [];
+            try { info.push("status " + res.status); } catch (e) { }
+            try {
+                var hd = res.headers || {}, names = ["content-length", "content-range", "accept-ranges", "content-encoding", "cf-cache-status", "server"];
+                for (k = 0; k < names.length; k++) {
+                    var v = typeof hd.get === "function" ? hd.get(names[k]) : (hd[names[k]] || hd[names[k].toUpperCase()]);
+                    if (v) info.push(names[k] + "=" + v);
+                }
+            } catch (e) { }
+            add(targets[t][0] + ": " + txt.length + " chars; " + info.join(", ") + "; members: " + keys.join(","));
+        } catch (e) { add(targets[t][0] + " failed: " + ((e && e.message) || e)); }
+    }
+    return JSON.stringify(rows);
+}
+
 // --------------------------------------------------------------- search ---
 async function searchResults(keyword) {
     try {
         var raw = String(keyword || "");
         try { raw = decodeURIComponent(raw.replace(/\+/g, " ")); } catch (e) { }
         if (/^\s*aw-debug\s*$/i.test(raw)) return await awDebug();
+        if (/^\s*aw-fetch\s*$/i.test(raw)) return await awFetchDebug();
         var dm = raw.match(/^\s*aw-(page|stream)(?:\s+(\S+))?\s*$/i);
         if (dm) return dm[1].toLowerCase() === "page" ? await awPageDebug(dm[2]) : await awStreamDebug(dm[2]);
         var q = awNorm(raw), words = q ? q.split(" ") : [];
@@ -503,23 +563,49 @@ async function searchResults(keyword) {
 async function extractDetails(url) {
     try {
         var html = await awGetAll(awAbs(url), { "Referer": AW_BASE + "/" });
-        var desc = "", aliases = "", airdate = "";
-        var m = html.match(/class="content[^"]*"[^>]*>([\s\S]*?)<\/div>/);
-        if (m) desc = awStrip(m[1]);
-        var j = html.match(/<h1[^>]*data-jp="([^"]*)"/);
-        if (j) aliases = awStrip(j[1]);
+        var desc = "", aliases = "", airdate = "", i, e;
+        var cm = html.match(/class=["']?content[\s"'>]/);
+        if (cm) {
+            e = awTagEnd(html, cm.index);
+            var close = html.indexOf("</div>", e);
+            if (e > 0 && close > e) desc = awStrip(html.slice(e + 1, close));
+        }
+        var h1 = awTags(html, "h1")[0];
+        if (h1) aliases = awStrip(awAttr(h1.tag, "data-jp") || "");
         var d = html.match(/Date aired:\s*<span[^>]*>([^<]*)<\/span>/i);
         if (d) airdate = awStrip(d[1]);
         else {
             var p = html.match(/Premiered:\s*<span[^>]*>([^<]*)<\/span>/i);
             if (p) airdate = awStrip(p[1]);
         }
+        if (!desc || !airdate) {
+            // Long episode lists push the info block past the app's 96 KB limit;
+            // the site's title list has the basics for every show.
+            try {
+                var slug = (awAbs(url).match(/\/watch\/([^\/?#]+)/) || [])[1], list = await awIndex(), it = null;
+                for (i = 0; i < list.length; i++) if (list[i].s === slug) { it = list[i]; break; }
+                if (it) {
+                    if (!desc) {
+                        var bits = [];
+                        if (it.f) bits.push(it.f);
+                        if (it.st) bits.push(it.st);
+                        if (it.g && it.g.length) bits.push(it.g.join(", "));
+                        if (it.tt) bits.push(it.tt + " episodes");
+                        if (it.sc) bits.push("Score " + (it.sc / 10).toFixed(1));
+                        if (it.r) bits.push(it.r);
+                        desc = bits.join(" · ");
+                    }
+                    if (!aliases) aliases = [it.j].concat(it.an || []).filter(function (x) { return x; }).join(", ");
+                    if (!airdate) airdate = it.rd || it.y || "";
+                }
+            } catch (e4) { }
+        }
         return JSON.stringify([{
             description: desc || "No description available",
             aliases: aliases || "N/A",
             airdate: airdate || "N/A"
         }]);
-    } catch (e) {
+    } catch (e2) {
         return JSON.stringify([{ description: "Error loading details", aliases: "N/A", airdate: "N/A" }]);
     }
 }
@@ -529,15 +615,32 @@ async function extractEpisodes(url) {
     try {
         var page = awAbs(url).replace(/[#?].*$/, "");
         var html = await awGetAll(page, { "Referer": AW_BASE + "/" });
-        var tags = html.match(/<a\s[^>]*data-num="[^"]+"[^>]*>/g) || [];
-        var seen = {}, out = [];
-        for (var i = 0; i < tags.length; i++) {
-            var num = tags[i].match(/data-num="([^"]+)"/)[1];
-            if (seen[num]) continue;
+        var anchors = awTags(html, "a"), seen = {}, out = [], i, maxn = 0;
+        for (i = 0; i < anchors.length; i++) {
+            var num = awAttr(anchors[i].tag, "data-num");
+            if (num === null || num === "" || seen[num] || isNaN(parseFloat(num))) continue;
             seen[num] = true;
-            var hm = tags[i].match(/href="([^"]+)"/);
-            var base = hm ? awAbs(hm[1]) : page;
+            var href = awAttr(anchors[i].tag, "href");
+            var base = href ? awAbs(href) : page;
             out.push({ href: base.replace(/[#?].*$/, "") + "?ep=" + num, number: parseFloat(num) });
+            if (parseFloat(num) > maxn) maxn = parseFloat(num);
+        }
+        // The app only receives the first ~96 KB of a page, so long episode lists
+        // arrive cut off. The site's title list knows each show's episode total.
+        var truncated = html.length >= 90000 && !/<\/html>\s*$/i.test(html);
+        if (truncated || !out.length) {
+            try {
+                var slug = (page.match(/\/watch\/([^\/]+)\/?$/) || [])[1], list = await awIndex();
+                for (i = 0; i < list.length; i++) {
+                    if (list[i].s === slug) {
+                        var tt = parseInt(list[i].tt, 10) || 0;
+                        for (var n = Math.floor(maxn) + 1; n <= tt; n++) {
+                            out.push({ href: page + "?ep=" + n, number: n });
+                        }
+                        break;
+                    }
+                }
+            } catch (e3) { }
         }
         out.sort(function (a, b) { return a.number - b.number; });
         return JSON.stringify(out);
@@ -595,6 +698,14 @@ async function awTryServer(token, ep, server, type, pageKey) {
         "Referer": embedUrl, "X-Requested-With": "XMLHttpRequest", "Accept": "application/json"
     });
     var data = JSON.parse(src);
+    try {
+        var tl = [];
+        for (var q = 0; q < (data.tracks || []).length; q++) {
+            var tk = data.tracks[q];
+            tl.push((tk.label || tk.kind || "?") + "/" + (tk.kind || "-") + (tk["default"] ? "*" : "") + " " + String(tk.file || "").slice(-28));
+        }
+        AW_TRACE.push("tracks(" + tl.length + "): " + (tl.join(" ; ") || "none") + " | keys: " + Object.keys(data).join(","));
+    } catch (e) { }
     var file = null;
     if (data.enc) file = awDecryptEnc(data.enc).file;
     else if (data.sources) file = typeof data.sources === "string" ? data.sources : data.sources.file;
