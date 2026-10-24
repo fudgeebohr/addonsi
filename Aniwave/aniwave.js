@@ -12,7 +12,7 @@
 // re-read from the live player page on every run; the others are only
 // changed by editing this file if the site ever rotates them.
 
-var AW_VERSION = "1.2.1";
+var AW_VERSION = "1.2.2";
 var AW_BASE = "https://aniwaves.org";
 var AW_PLAY = "https://play.aniwaves.org";
 var AW_UA = "Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Mobile/15E148 Safari/604.1";
@@ -503,7 +503,7 @@ async function extractEpisodes(url) {
             seen[num] = true;
             var hm = tags[i].match(/href="([^"]+)"/);
             var base = hm ? awAbs(hm[1]) : page;
-            out.push({ href: base.replace(/[#?].*$/, "") + "#ep=" + num, number: parseFloat(num) });
+            out.push({ href: base.replace(/[#?].*$/, "") + "?ep=" + num, number: parseFloat(num) });
         }
         out.sort(function (a, b) { return a.number - b.number; });
         return JSON.stringify(out);
@@ -571,7 +571,7 @@ async function awTryServer(token, ep, server, type, pageKey) {
 
 async function extractStreamUrl(url) {
     try {
-        var epm = String(url).match(/#ep=([^#]+)$/);
+        var epm = String(url).match(/[?&#]ep=([^&#]+)/);
         var ep = epm ? epm[1] : "1";
         var page = awAbs(url).replace(/[#?].*$/, "");
         var kre1 = /const\s+O\s*=\s*"[^"]*"\s*,\s*k\s*=\s*"([A-Za-z0-9_\-]+)"/, kre2 = /\bk\s*=\s*"([A-Za-z0-9_\-]{30,})"/;
