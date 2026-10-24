@@ -12,6 +12,7 @@
 // re-read from the live player page on every run; the others are only
 // changed by editing this file if the site ever rotates them.
 
+var AW_VERSION = "1.0.2";
 var AW_BASE = "https://aniwaves.org";
 var AW_PLAY = "https://play.aniwaves.org";
 var AW_UA = "Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Mobile/15E148 Safari/604.1";
@@ -329,11 +330,34 @@ function awNorm(str) {
     return String(str || "").toLowerCase().replace(/[^a-z0-9\u00c0-\uffff]+/g, " ").trim();
 }
 
+
+// Type  aw-debug  into the app's search box to see what the module sees.
+async function awDebug() {
+    var rows = [], t0 = Date.now();
+    function add(t) { rows.push({ title: String(t), image: "", href: AW_BASE + "/" }); }
+    add("Aniwaves module v" + AW_VERSION + " is running");
+    try {
+        var res = await fetchv2(AW_BASE + "/filter-index.json", { "User-Agent": AW_UA, "Referer": AW_BASE + "/", "Accept": "application/json" }, "GET", null);
+        var txt = await res.text();
+        add("fetch ok in " + (Date.now() - t0) + "ms, " + String(txt).length + " chars");
+        add("starts: " + String(txt).slice(0, 70).replace(/\s+/g, " "));
+        try {
+            var p = JSON.parse(String(txt).replace(/^\uFEFF/, "").trim());
+            add("parsed " + (p && p.length) + " titles; first: " + (p[0] && p[0].n));
+            var hit = 0;
+            for (var i = 0; i < p.length; i++) if (awNorm(p[i].n).indexOf("black clover") >= 0) hit++;
+            add("'black clover' matches: " + hit);
+        } catch (e) { add("JSON parse failed: " + e.message); }
+    } catch (e) { add("fetch failed: " + ((e && e.message) || e)); }
+    return JSON.stringify(rows);
+}
+
 // --------------------------------------------------------------- search ---
 async function searchResults(keyword) {
     try {
         var raw = String(keyword || "");
         try { raw = decodeURIComponent(raw.replace(/\+/g, " ")); } catch (e) { }
+        if (/^\s*aw-debug\s*$/i.test(raw)) return await awDebug();
         var q = awNorm(raw), words = q ? q.split(" ") : [];
         var list = await awIndex();
         var scored = [];
