@@ -12,7 +12,7 @@
 // re-read from the live player page on every run; the others are only
 // changed by editing this file if the site ever rotates them.
 
-var AW_VERSION = "1.7.1";
+var AW_VERSION = "1.8.0";
 var AW_BASE = "https://aniwaves.org";
 var AW_PLAY = "https://play.aniwaves.org";
 var AW_UA = "Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Mobile/15E148 Safari/604.1";
@@ -780,6 +780,18 @@ function awPickSubtitle(tracks) {
     return subs.length ? subs[0].file : "";
 }
 
+// One stream entry. Eclipse reads subtitles and subtitleHeaders from here as well
+// as from the top level, and ignores headers placed on individual subtitle objects.
+function awStreamEntry(r, hdr, subs) {
+    var entry = { title: "Aniwaves", streamUrl: r.stream, headers: hdr,
+        subtitleHeaders: { "Referer": "https://megaplay.buzz/", "Origin": "https://megaplay.buzz" } };
+    if (subs && typeof subs === "object" && subs.length) {
+        entry.subtitles = subs;
+        entry.subtitleTracks = subs;
+    }
+    return entry;
+}
+
 async function awTryServer(token, ep, server, type, pageKey) {
     var hash = token + "." + ep + "." + server + "." + type;
     var raw = await awGet(AW_PLAY + "/get/" + encodeURIComponent(hash), {
@@ -874,7 +886,7 @@ async function extractStreamUrl(url) {
                 }
                 return JSON.stringify({
                     stream: r.stream, subtitles: subs, subtitle: one, subtitleUrl: r.subtitleUrl, headers: hdr, subtitleHeaders: { "Referer": "https://megaplay.buzz/", "Origin": "https://megaplay.buzz" },
-                    streams: [{ title: "Aniwaves", streamUrl: r.stream, headers: hdr }]
+                    streams: [awStreamEntry(r, hdr, subs)]
                 });
             } catch (e) { AW_TRACE.push("server " + AW_SERVERS[i] + ": " + ((e && e.message) || e)); }
         }
