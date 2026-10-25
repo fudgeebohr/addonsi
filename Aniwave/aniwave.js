@@ -12,7 +12,7 @@
 // re-read from the live player page on every run; the others are only
 // changed by editing this file if the site ever rotates them.
 
-var AW_VERSION = "1.4.3";
+var AW_VERSION = "1.5.0";
 var AW_BASE = "https://aniwaves.org";
 var AW_PLAY = "https://play.aniwaves.org";
 var AW_UA = "Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Mobile/15E148 Safari/604.1";
@@ -24,6 +24,13 @@ var AW_CDN_SECRET = "MpCdnT0k3n!9f2K#xQ7vL5mR8wN1pY4s";
 var AW_CDN_TTL = 90;
 var AW_SERVERS = [2, 1, 3, 4];
 var AW_TYPE = "sub";
+// How subtitles are handed to the app:
+//   "data" = the module downloads the .vtt itself (with the right Referer) and
+//            passes it inline as a data: link, because the app loads subtitle
+//            links without any headers and the subtitle host refuses that.
+//   "url"  = pass the plain link (use this if "data" ever breaks playback).
+var AW_SUB_MODE = "data";
+var AW_SUB_MAX = 200000;   // characters; larger files fall back to the plain link
 
 // ---------------------------------------------------------------- crypto ---
 var AW_SBOX = [], AW_INV = [];
@@ -445,7 +452,8 @@ async function awStreamDebug(slug) {
     var r = JSON.parse(await extractStreamUrl(AW_BASE + "/watch/" + (slug || "black-clover-520") + "/?ep=1"));
     for (var i = 0; i < AW_TRACE.length; i++) add(AW_TRACE[i]);
     add("stream: " + (r.stream ? r.stream.length + " chars, " + r.stream.slice(0, 90) + "…" : "none"));
-    add("subtitles: " + (r.subtitles || "none"));
+    add("subtitles: " + (r.subtitles ? (r.subtitles.indexOf("data:") === 0 ? "inline data link, " + r.subtitles.length + " chars" : r.subtitles) : "none"));
+    r.subtitles = r.subtitleUrl || r.subtitles;
     if (r.subtitles) {
         var variants = [["no referer", {}], ["megaplay referer", { "Referer": "https://megaplay.buzz/", "Origin": "https://megaplay.buzz" }]];
         for (var v = 0; v < variants.length; v++) {
@@ -707,6 +715,27 @@ async function awPageKey() {
     return AW_PAGE_KEY_DEFAULT;
 }
 
+function awB64Std(bytes) {
+    var s = awB64UrlEncode(bytes).replace(/-/g, "+").replace(/_/g, "/");
+    while (s.length % 4) s += "=";
+    return s;
+}
+
+// Download the subtitle file ourselves and return it as a data: link.
+async function awInlineSubtitle(url) {
+    if (AW_SUB_MODE !== "data" || !url) return url;
+    try {
+        var txt = await awGet(url, { "Referer": "https://megaplay.buzz/", "Origin": "https://megaplay.buzz" });
+        txt = String(txt).replace(/^\uFEFF/, "");
+        if (!/^\s*WEBVTT/.test(txt) || txt.length > AW_SUB_MAX) { AW_TRACE.push("subtitle kept as link (" + txt.length + " chars)"); return url; }
+        AW_TRACE.push("subtitle inlined (" + txt.length + " chars)");
+        return "data:text/vtt;charset=utf-8;base64," + awB64Std(awUtf8Bytes(txt));
+    } catch (e) {
+        AW_TRACE.push("subtitle download failed: " + ((e && e.message) || e));
+        return url;
+    }
+}
+
 function awPickSubtitle(tracks) {
     if (!tracks || !tracks.length) return "";
     var subs = [], i;
@@ -759,7 +788,8 @@ async function awTryServer(token, ep, server, type, pageKey) {
     else if (data.sources) file = typeof data.sources === "string" ? data.sources : data.sources.file;
     if (!file) throw new Error("no file");
 
-    return { stream: awAttachToken(file), subtitles: awPickSubtitle(data.tracks) };
+    var subUrl = awPickSubtitle(data.tracks);
+    return { stream: awAttachToken(file), subtitles: await awInlineSubtitle(subUrl), subtitleUrl: subUrl };
 }
 
 async function extractStreamUrl(url) {
@@ -787,7 +817,7 @@ async function extractStreamUrl(url) {
                 // stream/subtitles; the extra keys are for apps that accept headers.
                 var hdr = { "Referer": "https://megaplay.buzz/", "Origin": "https://megaplay.buzz", "User-Agent": AW_UA };
                 return JSON.stringify({
-                    stream: r.stream, subtitles: r.subtitles, subtitle: r.subtitles, headers: hdr,
+                    stream: r.stream, subtitles: r.subtitles, subtitle: r.subtitles, subtitleUrl: r.subtitleUrl, headers: hdr,
                     streams: [{ title: "Aniwaves", streamUrl: r.stream, headers: hdr }]
                 });
             } catch (e) { AW_TRACE.push("server " + AW_SERVERS[i] + ": " + ((e && e.message) || e)); }
