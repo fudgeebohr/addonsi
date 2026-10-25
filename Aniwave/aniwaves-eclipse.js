@@ -12,7 +12,7 @@
 // re-read from the live player page on every run; the others are only
 // changed by editing this file if the site ever rotates them.
 
-var AW_VERSION = "1.7.0";
+var AW_VERSION = "1.7.1";
 var AW_BASE = "https://aniwaves.org";
 var AW_PLAY = "https://play.aniwaves.org";
 var AW_UA = "Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Mobile/15E148 Safari/604.1";
@@ -35,7 +35,7 @@ var AW_SUB_MODE = "data";
 //   "list"   = "subtitles": [{label,url,headers}]  (track list; lets the app send the headers)  <- MiruShin
 //   "inline" = same list, but every entry carries the subtitle text itself as a data: link,
 //              for apps that fetch subtitle files without headers                           <- Eclipse (iOS)
-var AW_SUB_FORMAT = "inline";
+var AW_SUB_FORMAT = "list";
 var AW_SUB_MAX = 200000;   // characters; larger files fall back to the plain link
 
 // ---------------------------------------------------------------- crypto ---
@@ -863,13 +863,17 @@ async function extractStreamUrl(url) {
                         subs.push({
                             label: tk.label, language: tk.label, lang: tk.label, name: tk.label,
                             url: tk.url, file: tk.url, src: tk.url, "default": tk.isDefault || si === 0,
-                            headers: { "Referer": "https://megaplay.buzz/", "Origin": "https://megaplay.buzz" }
+                            headers: { "Referer": "https://megaplay.buzz/", "Origin": "https://megaplay.buzz" },
+                            // other spellings some apps read for per-file request headers
+                            httpHeaders: { "Referer": "https://megaplay.buzz/", "Origin": "https://megaplay.buzz" },
+                            http_headers: { "Referer": "https://megaplay.buzz/", "Origin": "https://megaplay.buzz" },
+                            referer: "https://megaplay.buzz/", referrer: "https://megaplay.buzz/", origin: "https://megaplay.buzz"
                         });
                     }
                     one = AW_SUB_FORMAT === "inline" ? r.subtitleList[0].url : (r.subtitleUrl || r.subtitleList[0].url);
                 }
                 return JSON.stringify({
-                    stream: r.stream, subtitles: subs, subtitle: one, subtitleUrl: r.subtitleUrl, headers: hdr,
+                    stream: r.stream, subtitles: subs, subtitle: one, subtitleUrl: r.subtitleUrl, headers: hdr, subtitleHeaders: { "Referer": "https://megaplay.buzz/", "Origin": "https://megaplay.buzz" },
                     streams: [{ title: "Aniwaves", streamUrl: r.stream, headers: hdr }]
                 });
             } catch (e) { AW_TRACE.push("server " + AW_SERVERS[i] + ": " + ((e && e.message) || e)); }
