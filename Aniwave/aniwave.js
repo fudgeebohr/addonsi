@@ -29,7 +29,7 @@ var AW_TYPE = "sub";
 //            passes it inline as a data: link, because the app loads subtitle
 //            links without any headers and the subtitle host refuses that.
 //   "url"  = pass the plain link (use this if "data" ever breaks playback).
-var AW_SUB_MODE = "data";
+var AW_SUB_MODE = "url";
 var AW_SUB_MAX = 200000;   // characters; larger files fall back to the plain link
 
 // ---------------------------------------------------------------- crypto ---
