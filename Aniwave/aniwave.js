@@ -12,7 +12,7 @@
 // re-read from the live player page on every run; the others are only
 // changed by editing this file if the site ever rotates them.
 
-var AW_VERSION = "1.5.0";
+var AW_VERSION = "1.6.0";
 var AW_BASE = "https://aniwaves.org";
 var AW_PLAY = "https://play.aniwaves.org";
 var AW_UA = "Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Mobile/15E148 Safari/604.1";
@@ -29,7 +29,11 @@ var AW_TYPE = "sub";
 //            passes it inline as a data: link, because the app loads subtitle
 //            links without any headers and the subtitle host refuses that.
 //   "url"  = pass the plain link (use this if "data" ever breaks playback).
-var AW_SUB_MODE = "url";
+var AW_SUB_MODE = "data";
+// Layout of the subtitles field in the answer:
+//   "string" = "subtitles": "<one link>"          (the documented Sora softsub layout)
+//   "list"   = "subtitles": [{label,url,headers}]  (track list; lets the app send the headers)
+var AW_SUB_FORMAT = "list";
 var AW_SUB_MAX = 200000;   // characters; larger files fall back to the plain link
 
 // ---------------------------------------------------------------- crypto ---
@@ -452,8 +456,8 @@ async function awStreamDebug(slug) {
     var r = JSON.parse(await extractStreamUrl(AW_BASE + "/watch/" + (slug || "black-clover-520") + "/?ep=1"));
     for (var i = 0; i < AW_TRACE.length; i++) add(AW_TRACE[i]);
     add("stream: " + (r.stream ? r.stream.length + " chars, " + r.stream.slice(0, 90) + "…" : "none"));
-    add("subtitles: " + (r.subtitles ? (r.subtitles.indexOf("data:") === 0 ? "inline data link, " + r.subtitles.length + " chars" : r.subtitles) : "none"));
-    r.subtitles = r.subtitleUrl || r.subtitles;
+    add("subtitles: " + (typeof r.subtitles === "object" && r.subtitles ? "list of " + r.subtitles.length + " tracks (" + r.subtitles.map(function (x) { return x.label; }).join(" / ") + ")" : (r.subtitles ? (r.subtitles.indexOf("data:") === 0 ? "inline data link, " + r.subtitles.length + " chars" : r.subtitles) : "none")));
+    r.subtitles = r.subtitleUrl || "";
     if (r.subtitles) {
         var variants = [["no referer", {}], ["megaplay referer", { "Referer": "https://megaplay.buzz/", "Origin": "https://megaplay.buzz" }]];
         for (var v = 0; v < variants.length; v++) {
@@ -723,7 +727,7 @@ function awB64Std(bytes) {
 
 // Download the subtitle file ourselves and return it as a data: link.
 async function awInlineSubtitle(url) {
-    if (AW_SUB_MODE !== "data" || !url) return url;
+    if (AW_SUB_MODE !== "data" || AW_SUB_FORMAT === "list" || !url) return url;
     try {
         var txt = await awGet(url, { "Referer": "https://megaplay.buzz/", "Origin": "https://megaplay.buzz" });
         txt = String(txt).replace(/^\uFEFF/, "");
@@ -734,6 +738,19 @@ async function awInlineSubtitle(url) {
         AW_TRACE.push("subtitle download failed: " + ((e && e.message) || e));
         return url;
     }
+}
+
+function awSubtitleList(tracks) {
+    var out = [], i, t;
+    for (i = 0; i < (tracks || []).length; i++) {
+        t = tracks[i];
+        if (!t || !t.file) continue;
+        if (t.kind && !/captions|subtitles/i.test(t.kind)) continue;
+        out.push({ label: t.label || "Subtitles", url: t.file, isDefault: !!t["default"] });
+    }
+    // English first so the app's first choice is a readable one
+    out.sort(function (a, b) { return (/^english$/i.test(b.label) ? 1 : 0) - (/^english$/i.test(a.label) ? 1 : 0); });
+    return out;
 }
 
 function awPickSubtitle(tracks) {
@@ -789,7 +806,7 @@ async function awTryServer(token, ep, server, type, pageKey) {
     if (!file) throw new Error("no file");
 
     var subUrl = awPickSubtitle(data.tracks);
-    return { stream: awAttachToken(file), subtitles: await awInlineSubtitle(subUrl), subtitleUrl: subUrl };
+    return { stream: awAttachToken(file), subtitles: await awInlineSubtitle(subUrl), subtitleUrl: subUrl, subtitleList: awSubtitleList(data.tracks) };
 }
 
 async function extractStreamUrl(url) {
@@ -816,8 +833,21 @@ async function extractStreamUrl(url) {
                 // The CDN wants the player site as referrer. The documented keys are
                 // stream/subtitles; the extra keys are for apps that accept headers.
                 var hdr = { "Referer": "https://megaplay.buzz/", "Origin": "https://megaplay.buzz", "User-Agent": AW_UA };
+                var subs = r.subtitles, one = r.subtitles;
+                if (AW_SUB_FORMAT === "list" && r.subtitleList && r.subtitleList.length) {
+                    subs = [];
+                    for (var si = 0; si < r.subtitleList.length; si++) {
+                        var tk = r.subtitleList[si];
+                        subs.push({
+                            label: tk.label, language: tk.label, lang: tk.label, name: tk.label,
+                            url: tk.url, file: tk.url, src: tk.url, "default": tk.isDefault || si === 0,
+                            headers: { "Referer": "https://megaplay.buzz/", "Origin": "https://megaplay.buzz" }
+                        });
+                    }
+                    one = r.subtitleUrl || r.subtitleList[0].url;
+                }
                 return JSON.stringify({
-                    stream: r.stream, subtitles: r.subtitles, subtitle: r.subtitles, subtitleUrl: r.subtitleUrl, headers: hdr,
+                    stream: r.stream, subtitles: subs, subtitle: one, subtitleUrl: r.subtitleUrl, headers: hdr,
                     streams: [{ title: "Aniwaves", streamUrl: r.stream, headers: hdr }]
                 });
             } catch (e) { AW_TRACE.push("server " + AW_SERVERS[i] + ": " + ((e && e.message) || e)); }
