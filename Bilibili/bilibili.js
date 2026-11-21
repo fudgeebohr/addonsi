@@ -1,7 +1,7 @@
 // Bilibili (bilibili.tv / Bstation, international) - Sora module for MiruShin
 // Endpoints taken from the public web API used by bilibili.tv itself.
 // Videos on bilibili.tv are DASH: the video and the audio are SEPARATE files.
-var BL_VERSION = "1.0.4";
+var BL_VERSION = "1.1.0";
 
 var BL_WEB = "https://www.bilibili.tv";
 var BL_API = "https://api.bilibili.tv/intl/gateway/web";
@@ -11,10 +11,15 @@ var BL_UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML
 // Highest quality id to use: 112 = 1080P+, 80 = 1080P, 64 = 720P, 32 = 480P, 16 = 360P.
 // (guests normally only get up to 720P; the best one that exists <= this number is used)
 var BL_MAX_QUALITY = 112;
+// Address of YOUR relay (see worker.js / SETUP). Example: "https://bilibili-relay.yourname.workers.dev"
+// Leave it empty ("") to run without the relay (video only, no sound, in MiruShin on Windows).
+var BL_RELAY = "https://hsl.fugenkenneth.workers.dev/";
 // How the separate audio file is handed to the player:
-//   "dash"  = MiruShin's inline-DASH link: one manifest that holds the video AND audio file
-//   "split" = video url in "stream" + audio url in several extra keys (no sound in MiruShin)
-var BL_AUDIO_MODE = "dash";
+//   "auto"  = "relay" when BL_RELAY is filled in, otherwise "split"
+//   "relay" = HLS playlist from your relay: video + audio together (works in MiruShin on Windows)
+//   "dash"  = MiruShin's inline-DASH link (only players that accept single-file DASH)
+//   "split" = video url in "stream" + audio url in extra keys (MiruShin ignores the audio)
+var BL_AUDIO_MODE = "auto";
 // -----------------------------------------------------------------------------
 
 // ------------------------------------------------------------- helpers ------
@@ -148,7 +153,7 @@ function blDashLink(manifest) {
 async function searchResults(keyword) {
     try {
         var raw = blDecode(keyword);
-        var dm = raw.match(/^\s*bl-(debug|raw|play|sub)((?:\s+\S+)*)\s*$/i);
+        var dm = raw.match(/^\s*bl-(debug|raw|play|sub|relay)((?:\s+\S+)*)\s*$/i);
         if (dm) return await blCommand(dm[1].toLowerCase(), (dm[2] || "").trim());
 
         var q = raw.replace(/\s+/g, " ").trim();
@@ -447,6 +452,28 @@ function blMpd(video, audio) {
     return x + "  </Period>\n</MPD>";
 }
 
+function blMode() {
+    if (BL_AUDIO_MODE === "auto") return BL_RELAY ? "relay" : "split";
+    return BL_AUDIO_MODE;
+}
+
+function blB64Url(str) {
+    return blB64(blUtf8Bytes(String(str))).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+}
+
+// master playlist address on the relay: it holds the video AND the audio track
+function blRelayMaster(video, audio) {
+    var base = String(BL_RELAY).replace(/\/+$/, "");
+    var u = base + "/master.m3u8?v=" + blB64Url(video.url);
+    if (audio) u += "&a=" + blB64Url(audio.url);
+    if (video.codecs) u += "&vc=" + encodeURIComponent(video.codecs);
+    if (audio && audio.codecs) u += "&ac=" + encodeURIComponent(audio.codecs);
+    if (video.w && video.h) u += "&w=" + video.w + "&h=" + video.h;
+    if (video.bw) u += "&vb=" + video.bw;
+    if (audio && audio.bw) u += "&ab=" + audio.bw;
+    return u;
+}
+
 async function blResolve(url) {
     var id = blParse(url);
     if (!id) throw new Error("unknown link: " + String(url).slice(0, 80));
@@ -470,7 +497,17 @@ async function extractStreamUrl(url) {
         var title = "Bilibili " + (p.video.desc || (p.video.h ? p.video.h + "p" : "")) + (p.audio ? "" : " (no separate audio)");
         var out;
 
-        if (BL_AUDIO_MODE === "dash" && p.audio) {
+        var mode = blMode();
+        if (mode === "relay" && BL_RELAY) {
+            var rl = blRelayMaster(p.video, p.audio);
+            out = {
+                stream: rl, subtitles: subs, headers: hdr, subtitleHeaders: subHdr,
+                streams: [{ title: title, streamUrl: rl, headers: hdr, subtitleHeaders: subHdr, subtitles: subs }]
+            };
+            return JSON.stringify(out);
+        }
+
+        if (mode === "dash" && p.audio) {
             var mpd = blDashLink(blMpd(p.video, p.audio));
             out = {
                 stream: mpd, subtitles: subs, headers: hdr, subtitleHeaders: subHdr,
@@ -537,7 +574,7 @@ async function blCommand(cmd, arg) {
     var lines = [];
     try {
         if (cmd === "debug") {
-            lines.push("Bilibili module v" + BL_VERSION + " is running (audio mode: " + BL_AUDIO_MODE + ", max quality " + BL_MAX_QUALITY + ")");
+            lines.push("Bilibili module v" + BL_VERSION + " is running (audio mode: " + blMode() + (BL_RELAY ? ", relay set" : ", no relay") + ", max quality " + BL_MAX_QUALITY + ")");
             try {
                 var j = await blJson("/v2/search_v2?keyword=naruto&platform=web&pn=1&ps=30&s_locale=en_US");
                 var mods = (j.data && j.data.modules) || [], n = 0, i;
@@ -550,6 +587,29 @@ async function blCommand(cmd, arg) {
                 var p = await blPlay({ type: "ugc", aid: "4801666396986368" });
                 lines.push("playurl ok: " + p.videos.length + " video file(s), " + p.audios.length + " audio file(s); " + p.notes.join("; "));
             } catch (e2) { lines.push("playurl failed: " + ((e2 && e2.message) || e2)); }
+            return blDiagRow(lines);
+        }
+
+        if (cmd === "relay") {
+            if (!BL_RELAY) { lines.push("BL_RELAY is empty in bilibili.js - fill in your relay address first"); return blDiagRow(lines); }
+            var base = String(BL_RELAY).replace(/\/+$/, "");
+            var hr = await fetchv2(base + "/", {});
+            var ht = String(await hr.text());
+            lines.push("relay answered: HTTP " + hr.status + " " + ht.slice(0, 80));
+            var tp = await blPlay(arg ? await blResolve(arg) : { type: "ugc", aid: "4801666396986368" });
+            lines.push("test video: " + tp.video.desc + " " + tp.video.codecs + (tp.audio ? ", audio " + tp.audio.codecs : ", NO audio file"));
+            var master = blRelayMaster(tp.video, tp.audio);
+            var mr = await fetchv2(master, {});
+            var mt = String(await mr.text());
+            lines.push("master playlist: HTTP " + mr.status + ", " + mt.split("\n").length + " lines");
+            var tm = mt.match(/https?:\/\/[^\s"]+\/track\.m3u8\?u=[^\s"]+/g) || [];
+            for (var t = 0; t < tm.length; t++) {
+                var tr2 = await fetchv2(tm[t], {});
+                var tt = String(await tr2.text());
+                var segs = (tt.match(/#EXTINF/g) || []).length;
+                lines.push("track " + (t + 1) + ": HTTP " + tr2.status + (tr2.status === 200 ? ", " + segs + " segments" : " -> " + tt.slice(0, 160)));
+            }
+            lines.push(mt.length < 20 ? "master empty" : "relay looks " + (tm.length && lines.join(" ").indexOf("HTTP 200, ") > -1 ? "OK" : "broken - read the lines above"));
             return blDiagRow(lines);
         }
 
