@@ -1,7 +1,7 @@
 // Bilibili (bilibili.tv / Bstation, international) - Sora module for MiruShin
 // Endpoints taken from the public web API used by bilibili.tv itself.
 // Videos on bilibili.tv are DASH: the video and the audio are SEPARATE files.
-var BL_VERSION = "1.0.0";
+var BL_VERSION = "1.0.1";
 
 var BL_WEB = "https://www.bilibili.tv";
 var BL_API = "https://api.bilibili.tv/intl/gateway/web";
@@ -14,7 +14,7 @@ var BL_MAX_QUALITY = 112;
 // How the separate audio file is handed to the player:
 //   "split" = video url in "stream" + audio url in several audio keys (try this first)
 //   "mpd"   = one data: DASH manifest that contains both files
-var BL_AUDIO_MODE = "split";
+var BL_AUDIO_MODE = "mpd";
 // true  = subtitles are converted to WebVTT and sent as data: links
 // false = send the original subtitle link as is
 var BL_SUB_DATA = true;
