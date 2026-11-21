@@ -1,0 +1,19 @@
+{
+  "sourceName": "Bilibili",
+  "iconUrl": "https://raw.githubusercontent.com/fudgeebohr/addonsi/main/assets/bilibili.ico",
+  "author": {
+    "name": "fudgeebohr",
+    "icon": "https://raw.githubusercontent.com/fudgeebohr/addonsi/main/assets/sad_banana_cat.ico"
+  },
+  "version": "1.0.0",
+  "language": "English",
+  "streamType": "MP4",
+  "quality": "720p",
+  "baseUrl": "https://www.bilibili.tv/",
+  "searchBaseUrl": "https://www.bilibili.tv/en/search-result?keyword=%s",
+  "scriptUrl": "https://raw.githubusercontent.com/fudgeebohr/addonsi/main/Bilibili/bilibili.js",
+  "asyncJS": true,
+  "streamAsyncJS": false,
+  "softsub": true,
+  "type": "general"
+}
