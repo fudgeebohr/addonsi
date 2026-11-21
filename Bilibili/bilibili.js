@@ -1,7 +1,7 @@
 // Bilibili (bilibili.tv / Bstation, international) - Sora module for MiruShin
 // Endpoints taken from the public web API used by bilibili.tv itself.
 // Videos on bilibili.tv are DASH: the video and the audio are SEPARATE files.
-var BL_VERSION = "1.0.1";
+var BL_VERSION = "1.0.4";
 
 var BL_WEB = "https://www.bilibili.tv";
 var BL_API = "https://api.bilibili.tv/intl/gateway/web";
@@ -12,12 +12,9 @@ var BL_UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML
 // (guests normally only get up to 720P; the best one that exists <= this number is used)
 var BL_MAX_QUALITY = 112;
 // How the separate audio file is handed to the player:
-//   "split" = video url in "stream" + audio url in several audio keys (try this first)
-//   "mpd"   = one data: DASH manifest that contains both files
-var BL_AUDIO_MODE = "mpd";
-// true  = subtitles are converted to WebVTT and sent as data: links
-// false = send the original subtitle link as is
-var BL_SUB_DATA = true;
+//   "dash"  = MiruShin's inline-DASH link: one manifest that holds the video AND audio file
+//   "split" = video url in "stream" + audio url in several extra keys (no sound in MiruShin)
+var BL_AUDIO_MODE = "dash";
 // -----------------------------------------------------------------------------
 
 // ------------------------------------------------------------- helpers ------
@@ -140,6 +137,11 @@ function blB64(bytes) {
 
 function blDataUri(mime, text) {
     return "data:" + mime + ";base64," + blB64(blUtf8Bytes(text));
+}
+
+// MiruShin understands "mirushin-dash:<base64url of an MPD manifest>" (its own inline-DASH link).
+function blDashLink(manifest) {
+    return "mirushin-dash:" + blB64(blUtf8Bytes(manifest)).replace(/\+/g, "-").replace(/\//g, "_");
 }
 
 // ------------------------------------------------------------- search -----
@@ -386,52 +388,31 @@ function blTime(sec) {
     return p(h, 2) + ":" + p(m, 2) + ":" + p(s, 2) + "." + p(ms, 3);
 }
 
-// bilibili subtitle files are JSON: {"body":[{"from":1.2,"to":3.4,"content":"..."}]}
-function blToVtt(text) {
-    var t = String(text || "").replace(/^﻿/, "").trim();
-    if (/^WEBVTT/.test(t)) return t;
-    if (t.charAt(0) !== "{" && t.charAt(0) !== "[") return null;
-    var j;
-    try { j = JSON.parse(t); } catch (e) { return null; }
-    var body = j && (j.body || j.data || j);
-    if (!body || !body.length) return null;
-    var out = ["WEBVTT", ""], i, n = 0;
-    for (i = 0; i < body.length; i++) {
-        var l = body[i] || {};
-        var c = String(l.content == null ? "" : l.content).replace(/\r/g, "").replace(/-->/g, "->").trim();
-        if (!c) continue;
-        n++;
-        out.push(String(n));
-        out.push(blTime(l.from) + " --> " + blTime(l.to));
-        out.push(c);
-        out.push("");
+// MiruShin reads SRT / VTT / ASS subtitle files over HTTP. Bilibili lists several
+// files per language; JSON ones (its own format) cannot be used, so pick srt/ass/vtt.
+function blSubUrl(s) {
+    var c = [s && s.srt && s.srt.url, s && s.ass && s.ass.url, s && s.vtt && s.vtt.url, s && s.url], i;
+    for (i = 0; i < c.length; i++) {
+        var u = blHttps(c[i] || "");
+        if (u && !/\.json(\?|#|$)/i.test(u)) return u;
     }
-    return n ? out.join("\n") : null;
+    return "";
 }
 
 async function blSubs(id) {
-    var q = id.type === "ugc" ? "aid=" + id.aid : "ep_id=" + id.ep;
+    var q = id.type === "ugc" ? "aid=" + id.aid : "ep_id=" + id.ep + "&episode_id=" + id.ep;
     var j = await blJson("/v2/subtitle?" + q + "&platform=web&s_locale=en_US");
-    var list = (j.data && j.data.subtitles) || [];
+    var d = j.data || {};
+    var list = (d.subtitles || d.video_subtitle || []).slice(0, 20);
     var tracks = [], i;
-    list = list.slice(0, 12);
-    var texts = await Promise.all(list.map(function (s) {
-        var u = blHttps((s && s.url) || "");
-        if (!u) return Promise.resolve("");
-        return blGet(u, { "User-Agent": BL_UA, "Referer": BL_WEB + "/", "Origin": BL_WEB }).catch(function () { return ""; });
-    }));
     for (i = 0; i < list.length; i++) {
-        var s = list[i] || {}, url = blHttps(s.url || "");
+        var s = list[i] || {}, url = blSubUrl(s);
         if (!url) continue;
-        var label = String(s.lang_doc || s.lang || "Subtitle");
-        var out = url;
-        if (BL_SUB_DATA && texts[i]) {
-            var vtt = blToVtt(texts[i]);
-            if (vtt) out = blDataUri("text/vtt;charset=utf-8", vtt);
-        }
+        var label = String(s.lang_doc || s.lang || s.lang_key || "Subtitle");
+        var lang = String(s.lang_key || s.lang || label);
         tracks.push({
-            label: label, language: String(s.lang || label), lang: String(s.lang || label), name: label,
-            url: out, file: out, src: out, "default": false,
+            label: label, language: lang, lang: lang, name: label,
+            url: url, file: url, src: url, "default": false,
             headers: { "Referer": BL_WEB + "/", "Origin": BL_WEB, "User-Agent": BL_UA }
         });
     }
@@ -489,8 +470,8 @@ async function extractStreamUrl(url) {
         var title = "Bilibili " + (p.video.desc || (p.video.h ? p.video.h + "p" : "")) + (p.audio ? "" : " (no separate audio)");
         var out;
 
-        if (BL_AUDIO_MODE === "mpd" && p.audio) {
-            var mpd = blDataUri("application/dash+xml", blMpd(p.video, p.audio));
+        if (BL_AUDIO_MODE === "dash" && p.audio) {
+            var mpd = blDashLink(blMpd(p.video, p.audio));
             out = {
                 stream: mpd, subtitles: subs, headers: hdr, subtitleHeaders: subHdr,
                 streams: [{ title: title, streamUrl: mpd, headers: hdr, subtitleHeaders: subHdr, subtitles: subs }]
@@ -587,7 +568,7 @@ async function blCommand(cmd, arg) {
             if (cmd === "sub") {
                 var tr = await blSubs(id);
                 lines.push(tr.length + " subtitle track(s)");
-                for (var s = 0; s < tr.length; s++) lines.push(tr[s].label + " -> " + (tr[s].url.indexOf("data:") === 0 ? "converted to WebVTT (" + tr[s].url.length + " chars)" : blShort(tr[s].url)));
+                for (var s = 0; s < tr.length; s++) lines.push(tr[s].label + " -> " + (blShort(tr[s].url)));
                 return blDiagRow(lines);
             }
             var pl = await blPlay(id);
